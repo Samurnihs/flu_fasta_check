@@ -13,7 +13,7 @@ more detailed info.
 positional arguments:
   input                 Path to fasta file to analyze. In the example all
                         sequences from the file will be checked.
-  {A,B}                 Type of Influenza virus (A or B).
+  {A,B}                 Type of Influenza virus (A or B) as a reference.
 
 optional arguments:
   -h, --help            show this help message and exit
