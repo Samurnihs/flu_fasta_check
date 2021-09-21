@@ -6,7 +6,7 @@ import random
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-# lol
+
 
 def make_kmers(st, length=10, number=500):
     """The function cuts the set of kmers from the given string.
