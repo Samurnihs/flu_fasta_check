@@ -6,7 +6,7 @@ import random
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-
+from Bio.Data import IUPACData
 
 def make_kmers(st, length=10, number=500):
     """The function cuts the set of kmers from the given string.
@@ -85,32 +85,144 @@ def isseg(seq_record, refs, segnum, threshold=0.1):
     else:
         return False
 
+def check_empty(sequences, input_file):
+    """If no fasta sequences were found, check that file is empty"""
+    if not sequences:
+        if os.stat(input_file).st_size != 0:
+            return False
+
+    return True
+
+def check_header(segment, seq_ids):
+    """Check fasta id correctness for each record in file"""
+    if len(seq_ids) == 1:
+        if int(seq_ids[0]) != segment:
+            print(f"Invalid fasta header {seq_ids[0]}")
+            return False
+    elif len(seq_ids) > 1:
+        for id in seq_ids:
+            id_parsed = id.split('_')
+            if len(id_parsed)!=2 or not id_parsed[1].isdigit():
+                print(f"Invalid fasta header {id}")
+                return False
+    return True
+
+def check_sequence(segment, sequences, max_N_ratio, min_chunk_length, max_segment_length):
+    """Check sequence length, characters and N content"""
+    summary_length = 0
+    for record in sequences:
+
+        # check minimum chunk length
+        sequence_length= len(record.seq)
+        if sequence_length < min_chunk_length:
+            print(f"{record.id} fasta length is too small")
+            return False
+            
+        summary_length+=sequence_length
+
+        # check all letters are IUPAC nucleotides
+        iupac_nucls = ''.join(list(IUPACData.ambiguous_dna_values.keys()))
+        seq = record.seq.upper()
+        if not seq.strip(iupac_nucls) == '':
+            print(f"{record.id} fasta contains invalid nucleotide chars")
+            return False
+
+        # check N content
+        N_num = seq.count('N')
+        N_ratio = N_num/sequence_length
+
+        if N_ratio > max_N_ratio:
+            print(f"Too much N in {record.id} - {round(N_ratio*100,2)}%")
+            return False
+    
+    # check maximum segment length
+    if summary_length > max_segment_length:
+        print(f"{segment} fasta summary length is too large")
+        return False   
+
+    return True
+
+def check_segment(segment, sequences):
+    """Check if sequences came from the corresponding segment"""
+    is_seq_correct = []
+    for record in sequences:
+        if not isseg(record, reference_sequences, segment):
+            is_seq_correct.append(False)
+        else:
+            is_seq_correct.append(True)
+
+    any_seq_correct = any(is_seq_correct)
+    all_seq_correct = all(is_seq_correct)
+
+    # all chunks are valid
+    if all_seq_correct:
+        return 0
+
+    # all chunks are invalid
+    if not any_seq_correct:
+        return 2
+    # some chunks are invalid
+    else:
+        return 1
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='The script contains the set of functions needed to check if a sequence is the certain segment of the Influenza A/B genome. Use it with parameter --help for more detailed info.')
+    parser.add_argument('input',
+        type=str,
+        nargs='+', 
+        help='Path to 8 fasta files to analyze. Each file corresponds to the Influenza virus segment: segment1.fasta, segment2.fasta...segment8.fasta')
+    parser.add_argument('type',
+        type=str,
+        help='Type of Influenza virus (A or B).',
+        choices= ['A', 'B'])
+    parser.add_argument('--max_N_ratio', 
+        type=float,
+        help='Maximum permissible content of N in each sequence , default: 0.5', 
+        default=0.5)
+    parser.add_argument('--min_chunk_length', 
+        type=int,
+        help='minimum length for each chunk of segment, default: 50', 
+        default=50)
+    parser.add_argument('--max_segment_length', 
+        type=int,
+        help='maximum length of segment, default: 3000', 
+        default=3000)
 
-	parser = argparse.ArgumentParser(description='The script contains the set of functions needed to check if a sequence is the certain segment of the Influenza A/B genome. Use it with parameter -help for more detailed info.')
-	parser.add_argument('input', type=str, nargs='+', help='Path to fasta file to analyze. In the example all sequences from the file will be checked.')
-	parser.add_argument('type', type=str, help='Type of Influenza virus (A or B).', choices= ['A', 'B'])
-	parser.add_argument('-seg', type=int, nargs='+', help='Number of the segement(s) to check the sequence for. \nPB2: 1\nPB1 and PB1-F2: 2\nPA: 3\nHA: 4\nNP: 5\nNA: 6\nM2 and M1: 7\nNS2 and NS1: 8', \
-		choices=[1, 2, 3, 4, 5, 6, 7, 8], default=[1, 2, 3, 4, 5, 6, 7, 8])
-	args = parser.parse_args()
+    args = parser.parse_args()
 
+    # Parse reference fasta files
+    reference_folder = os.path.join(os.getcwd(),'InfRefs', 'Influenza_'+args.type)
+    reference_files = list(map(lambda x: os.path.join(reference_folder, x), os.listdir(reference_folder)))
+    reference_sequences = list(map(lambda x: list(SeqIO.parse(x, "fasta")), reference_files)) # list with reference sequences
 
-	refpack = {'A': 
-		list(map(lambda x: list(SeqIO.parse(x, "fasta")), list(map(lambda x: os.path.join(os.getcwd(),'InfRefs', \
-		'Influenza_A', x), os.listdir(os.path.join(os.getcwd(),'InfRefs', 'Influenza_A')))))), \
-		'B':
-		list(map(lambda x: list(SeqIO.parse(x, "fasta")), list(map(lambda x: os.path.join(os.getcwd(),'InfRefs', \
-		'Influenza_B', x), os.listdir(os.path.join(os.getcwd(),'InfRefs', 'Influenza_B'))))))} # dictionary with reference sequences
+    # Check if all 8 files for each segment were provided
+    if len(args.input)!=8:
+        sys.exit("8 fasta files should be provided")
 
-	df = pd.DataFrame(columns=['Sequence', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8']) # the output dataframe
-	for file in args.input:
-		seq = list(SeqIO.parse(file, "fasta"))
-		oar = [None] * 9
-		for i in range(len(seq)):
-			oar[0] = seq[i].description
-			for s in args.seg:
-				oar[s] = isseg(seq[i], refpack[args.type], s)
-			df.loc[len(df)] = oar
+    # Check if fasta headers and sequences are valid
+    for i,input_file in enumerate(args.input):
+        segment = i+1 # number of segment from 1 to 8
+        sequences = list(SeqIO.parse(input_file, "fasta"))
 
-	df.to_csv(sys.stdout)
+        # If no fasta sequences were found, check that file is empty
+        if not check_empty(sequences, input_file):
+            sys.exit(f"Invalid fasta for segment {segment}")
+
+        if not sequences:
+            continue
+
+        # Check fasta id correctness for each record in file
+        seq_ids = [record.id for record in sequences]
+        if not check_header(segment, seq_ids):
+            sys.exit(f"Invalid header in fasta for segment {segment}")
+
+        # Check sequence length, characters and N content
+        if not check_sequence(segment, sequences, args.max_N_ratio, args.min_chunk_length, args.max_segment_length):
+            sys.exit(f"Invalid sequence for segment {segment}")
+
+        print(f"Segment {segment} fasta validation was passed!")
+        
+        # Check if sequences came from the corresponding segment
+        status_info = {0:'correct', 1:'partially correct', 2:'invalid'}
+        status = check_segment(segment, sequences)
+        print(f"Sequences from file {input_file} correspond to segment {segment} reference: {status_info[status]}")
